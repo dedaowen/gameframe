@@ -1,0 +1,142 @@
+package utils
+
+import (
+	"encoding/json"
+	"io/ioutil"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+
+	"github.com/dedaowen/gameframe/iface"
+	"github.com/dedaowen/gameframe/logger"
+	"github.com/dedaowen/gameframe/timer"
+)
+
+type GlobalObj struct {
+	TcpServers             map[string]iface.Iserver
+	TcpServer              iface.Iserver
+	OnConnectioned         func(fconn iface.Iconnection)
+	OnClosed               func(fconn iface.Iconnection)
+	OnClusterConnectioned  func(fconn iface.Iconnection) //集群rpc root节点回调
+	OnClusterClosed        func(fconn iface.Iconnection)
+	OnClusterCConnectioned func(fconn iface.Iclient) //集群rpc 子节点回调
+	OnClusterCClosed       func(fconn iface.Iclient)
+	OnServerStop           func() //服务器停服回调
+	Protoc                 iface.IServerProtocol
+	RpcSProtoc             iface.IServerProtocol
+	RpcCProtoc             iface.IClientProtocol
+	Host                   string
+	IPVersion              string //默认tcp4，ws表示使用websocket，此时Host字段格式为/wspath
+	WsPath                 string
+	DebugPort              int      //telnet port 用于单机模式
+	WriteList              []string //telnet ip list
+	TcpPort                int
+	MaxConn                int
+	IntraMaxConn           int //内部服务器最大连接数
+	//log
+	LogPath           string
+	LogName           string
+	MaxLogNum         int32
+	MaxFileSize       int64
+	LogFileUnit       logger.UNIT
+	LogLevel          logger.LEVEL
+	SetToConsole      bool
+	LogFileType       int32
+	PoolSize          int32
+	MaxWorkerLen      int32
+	MaxSendChanLen    int32
+	FrameSpeed        uint8
+	Name              string
+	MaxPacketSize     uint32
+	FrequencyControl  string                    //  100/h, 100/m, 100/s
+	CmdInterpreter    iface.ICommandInterpreter //xingo debug tool Interpreter
+	ProcessSignalChan chan os.Signal
+	safeTimerScheduel *timer.SafeTimerScheduel
+
+	CheckOrigin func(*http.Request) bool
+}
+
+func (this *GlobalObj) GetFrequency() (int, string) {
+	fc := strings.Split(this.FrequencyControl, "/")
+	if len(fc) != 2 {
+		return 0, ""
+	} else {
+		fc0_int, err := strconv.Atoi(fc[0])
+		if err == nil {
+			return fc0_int, fc[1]
+		} else {
+			logger.Error("FrequencyControl params error: ", this.FrequencyControl)
+			return 0, ""
+		}
+	}
+}
+
+func (this *GlobalObj) IsThreadSafeMode() bool {
+	if this.PoolSize == 1 {
+		return true
+	} else {
+		return false
+	}
+}
+
+func (this *GlobalObj) GetSafeTimer() *timer.SafeTimerScheduel {
+	return this.safeTimerScheduel
+}
+
+func (this *GlobalObj) Reload() {
+	//读取用户自定义配置
+	data, err := ioutil.ReadFile("conf/server.json")
+	if err != nil {
+		// panic(err)
+		//追加一次父目录，因为vscode中不允许同一级存在多个main函数
+		data, err = ioutil.ReadFile("../conf/server.json")
+		if err != nil {
+			panic(err)
+		}
+	}
+	err = json.Unmarshal(data, this)
+	if err != nil {
+		panic(err)
+	} else {
+		//init safetimer
+		if GlobalObject.safeTimerScheduel == nil && GlobalObject.IsThreadSafeMode() {
+			GlobalObject.safeTimerScheduel = timer.NewSafeTimerScheduel()
+		}
+	}
+}
+
+var GlobalObject *GlobalObj
+
+func init() {
+	GlobalObject = &GlobalObj{
+		TcpServers:             make(map[string]iface.Iserver),
+		Host:                   "0.0.0.0",
+		WsPath:                 "",
+		TcpPort:                8109,
+		MaxConn:                12000,
+		IntraMaxConn:           100,
+		LogPath:                "./log",
+		LogName:                "server.log",
+		MaxLogNum:              10,
+		MaxFileSize:            100,
+		LogFileUnit:            logger.KB,
+		LogLevel:               logger.ERROR,
+		SetToConsole:           true,
+		LogFileType:            1,
+		PoolSize:               10,
+		MaxWorkerLen:           1024 * 2,
+		MaxSendChanLen:         1024,
+		FrameSpeed:             30,
+		OnConnectioned:         func(fconn iface.Iconnection) {},
+		OnClosed:               func(fconn iface.Iconnection) {},
+		OnClusterConnectioned:  func(fconn iface.Iconnection) {},
+		OnClusterClosed:        func(fconn iface.Iconnection) {},
+		OnClusterCConnectioned: func(fconn iface.Iclient) {},
+		OnClusterCClosed:       func(fconn iface.Iclient) {},
+		ProcessSignalChan:      make(chan os.Signal, 1),
+
+		CheckOrigin: func(_ *http.Request) bool { return true },
+	}
+	GlobalObject.Reload()
+}
